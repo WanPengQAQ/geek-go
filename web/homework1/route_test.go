@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+// 测试输入path有问题的case
 func TestMyTestOfIllegalPath(t *testing.T) {
 	mockHandler := func(ctx *Context) {}
 
@@ -35,6 +36,58 @@ func TestMyTestOfIllegalPath(t *testing.T) {
 	assert.PanicsWithValue(t, "web: 非法路由。不允许使用 //a/b, /a//b 之类的路由, [//a/b]", func() {
 		r.addRoute(http.MethodGet, "//a/b", mockHandler)
 	})
+
+	// 普通节点重复注册
+	r.addRoute(http.MethodGet, "/a/b/c", mockHandler)
+	assert.PanicsWithValue(t, "web: 路由冲突[/a/b/c]", func() {
+		r.addRoute(http.MethodGet, "/a/b/c", mockHandler)
+	})
+
+	// 根节点重复注册
+	r.addRoute(http.MethodGet, "/", mockHandler)
+	assert.PanicsWithValue(t, "web: 路由冲突[/]", func() {
+		r.addRoute(http.MethodGet, "/", mockHandler)
+	})
+}
+
+func newNode(path string) *node {
+	return &node{
+		typ:        0,
+		path:       path,
+		children:   nil,
+		handler:    nil,
+		starChild:  nil,
+		paramChild: nil,
+		paramName:  "",
+		regChild:   nil,
+		regExpr:    nil,
+	}
+}
+
+func TestMyTestOfStaticRoute(t *testing.T) {
+	testRoutes := []struct {
+		method string
+		path   string
+		should map[string]*node
+	}{
+		{
+			method: http.MethodGet,
+			path:   "/",
+			should: map[string]*node{
+				http.MethodGet: {
+					path: "/",
+				},
+			},
+		},
+	}
+	mokeHandle := func(ctx *Context) {}
+	fmt.Println(testRoutes)
+
+	// root结点只能被set进去一次handleFunc
+	r := newRouter()
+	r.addRoute(http.MethodGet, "/", mokeHandle)
+
+	fmt.Println(r)
 }
 
 func Test_router_AddRoute(t *testing.T) {

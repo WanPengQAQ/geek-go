@@ -1,7 +1,6 @@
 package web
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 )
@@ -18,16 +17,6 @@ func newRouter() router {
 	}
 }
 
-// getHeaderNode
-// 为每一个Tree增加一个虚拟节点, 从而不需要特殊处理仅有一个根结点"/"的情况
-func (r *router) getHeaderNode(method string) *node {
-	if n, ok := r.trees[method]; ok {
-		return n
-	}
-	r.trees[method] = &node{}
-	return r.trees[method]
-}
-
 // checkPath 校验path的合法性
 func (r *router) checkPath(path string) {
 	if len(path) == 0 {
@@ -36,7 +25,7 @@ func (r *router) checkPath(path string) {
 	if !strings.HasPrefix(path, "/") {
 		panic("web: 路由必须以 / 开头")
 	}
-	if strings.HasSuffix(path, "/") {
+	if strings.HasSuffix(path, "/") && len(path) != 1 {
 		panic("web: 路由不能以 / 结尾")
 	}
 
@@ -49,6 +38,22 @@ func (r *router) checkPath(path string) {
 	}
 }
 
+// 将输入的path根据"/"切分，例如:
+//
+//	/a/b/c -> [/, a, b, c]
+//	 / -> [/]
+func (r *router) pathSegment(path string) []string {
+	sp := strings.Split(path, "/")
+	result := []string{"/"}
+	for _, seg := range sp {
+		if len(strings.TrimSpace(seg)) == 0 {
+			continue
+		}
+		result = append(result, seg)
+	}
+	return result
+}
+
 // addRoute 注册路由。
 // method 是 HTTP 方法
 // - 已经注册了的路由，无法被覆盖。例如 /user/home 注册两次，会冲突
@@ -58,8 +63,25 @@ func (r *router) checkPath(path string) {
 // - 同名路径参数，在路由匹配的时候，值会被覆盖。例如 /user/:id/abc/:id，那么 /user/123/abc/456 最终 id = 456
 func (r *router) addRoute(method string, path string, handler HandleFunc) {
 	r.checkPath(path)
-	parent := r.getHeaderNode(method)
-	fmt.Println(parent)
+	r.initRoot(method)
+
+	currNode := r.trees[method]
+	segs := r.pathSegment(path)
+	for _, seg := range segs[1:] {
+		currNode = currNode.childOrCreate(seg)
+	}
+
+	if currNode.handler != nil {
+		panic("web: 路由冲突[" + path + "]")
+	}
+	currNode.handler = handler
+}
+
+func (r *router) initRoot(method string) {
+	root := r.trees[method]
+	if root == nil {
+		r.trees[method] = newRootNode()
+	}
 }
 
 // findRoute 查找对应的节点
@@ -112,6 +134,20 @@ type node struct {
 	regExpr  *regexp.Regexp
 }
 
+func newRootNode() *node {
+	return &node{
+		typ:        0,
+		path:       "/",
+		children:   nil,
+		handler:    nil,
+		starChild:  nil,
+		paramChild: nil,
+		paramName:  "",
+		regChild:   nil,
+		regExpr:    nil,
+	}
+}
+
 // child 返回子节点
 // 第一个返回值 *node 是命中的节点
 // 第二个返回值 bool 代表是否命中
@@ -125,7 +161,26 @@ func (n *node) childOf(path string) (*node, bool) {
 // 最后会从 children 里面查找，
 // 如果没有找到，那么会创建一个新的节点，并且保存在 node 里面
 func (n *node) childOrCreate(path string) *node {
-	panic("implement me")
+	if n, ok := n.children[path]; ok {
+		return n
+	}
+
+	if n.children == nil {
+		n.children = make(map[string]*node)
+	}
+
+	n.children[path] = &node{
+		typ:        0,
+		path:       path,
+		children:   nil,
+		handler:    nil,
+		starChild:  nil,
+		paramChild: nil,
+		paramName:  "",
+		regChild:   nil,
+		regExpr:    nil,
+	}
+	return n.children[path]
 }
 
 type matchInfo struct {
