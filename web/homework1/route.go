@@ -1,7 +1,9 @@
 package web
 
 import (
+	"fmt"
 	"regexp"
+	"strings"
 )
 
 type router struct {
@@ -16,6 +18,37 @@ func newRouter() router {
 	}
 }
 
+// getHeaderNode
+// 为每一个Tree增加一个虚拟节点, 从而不需要特殊处理仅有一个根结点"/"的情况
+func (r *router) getHeaderNode(method string) *node {
+	if n, ok := r.trees[method]; ok {
+		return n
+	}
+	r.trees[method] = &node{}
+	return r.trees[method]
+}
+
+// checkPath 校验path的合法性
+func (r *router) checkPath(path string) {
+	if len(path) == 0 {
+		panic("web: 路由是空字符串")
+	}
+	if !strings.HasPrefix(path, "/") {
+		panic("web: 路由必须以 / 开头")
+	}
+	if strings.HasSuffix(path, "/") {
+		panic("web: 路由不能以 / 结尾")
+	}
+
+	if strings.HasPrefix(path, "//") {
+		panic("web: 非法路由。不允许使用 //a/b, /a//b 之类的路由, [" + path + "]")
+	}
+
+	if strings.Contains(path, "//") {
+		panic("web: 非法路由。不允许使用 //a/b, /a//b 之类的路由, [" + path + "]")
+	}
+}
+
 // addRoute 注册路由。
 // method 是 HTTP 方法
 // - 已经注册了的路由，无法被覆盖。例如 /user/home 注册两次，会冲突
@@ -24,7 +57,9 @@ func newRouter() router {
 // - 不能在同一个位置同时注册通配符路由和参数路由，例如 /user/:id 和 /user/* 冲突
 // - 同名路径参数，在路由匹配的时候，值会被覆盖。例如 /user/:id/abc/:id，那么 /user/123/abc/456 最终 id = 456
 func (r *router) addRoute(method string, path string, handler HandleFunc) {
-	panic("implement me")
+	r.checkPath(path)
+	parent := r.getHeaderNode(method)
+	fmt.Println(parent)
 }
 
 // findRoute 查找对应的节点
@@ -36,8 +71,10 @@ func (r *router) findRoute(method string, path string) (*matchInfo, bool) {
 type nodeType int
 
 const (
+	// 虚拟节点
+	nodeTypeFake = iota
 	// 静态路由
-	nodeTypeStatic = iota
+	nodeTypeStatic
 	// 正则路由
 	nodeTypeReg
 	// 路径参数路由
