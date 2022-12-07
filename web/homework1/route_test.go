@@ -50,44 +50,74 @@ func TestMyTestOfIllegalPath(t *testing.T) {
 	})
 }
 
-func newNode(path string) *node {
-	return &node{
-		typ:        0,
-		path:       path,
-		children:   nil,
-		handler:    nil,
-		starChild:  nil,
-		paramChild: nil,
-		paramName:  "",
-		regChild:   nil,
-		regExpr:    nil,
-	}
-}
-
 func TestMyTestOfStaticRoute(t *testing.T) {
 	testRoutes := []struct {
-		method string
-		path   string
-		should map[string]*node
+		method []string
+		path   []string
+		should router
 	}{
 		{
-			method: http.MethodGet,
-			path:   "/",
-			should: map[string]*node{
-				http.MethodGet: {
+			method: []string{http.MethodGet, http.MethodPost},
+			path:   []string{"/", "/"},
+			should: router{trees: map[string]*node{
+				http.MethodGet: &node{
 					path: "/",
 				},
-			},
+				http.MethodPost: &node{
+					path: "/",
+				},
+			}},
+		},
+		{
+			method: []string{http.MethodGet},
+			path:   []string{"/a"},
+			should: router{trees: map[string]*node{
+				http.MethodGet: &node{
+					path: "/",
+					children: map[string]*node{
+						"a": &node{
+							path: "a",
+						},
+					},
+				},
+			}},
+		},
+		{
+			method: []string{http.MethodGet, http.MethodGet, http.MethodGet, http.MethodGet},
+			path:   []string{"/a", "/b", "/a/c", "/a/e"},
+			should: router{trees: map[string]*node{
+				http.MethodGet: &node{
+					path: "/",
+					children: map[string]*node{
+						"a": &node{
+							path: "a",
+							children: map[string]*node{
+								"c": &node{
+									path: "c",
+								},
+								"e": &node{
+									path: "e",
+								},
+							},
+						},
+						"b": &node{
+							path: "b",
+						},
+					},
+				},
+			}},
 		},
 	}
-	mokeHandle := func(ctx *Context) {}
-	fmt.Println(testRoutes)
 
-	// root结点只能被set进去一次handleFunc
-	r := newRouter()
-	r.addRoute(http.MethodGet, "/", mokeHandle)
+	for _, u := range testRoutes {
+		r := newRouter()
+		for i := 0; i < len(u.method); i++ {
+			r.addRoute(u.method[i], u.path[i], nil)
+		}
+		s, ok := r.equal(u.should)
+		assert.Equal(t, ok, true, s)
+	}
 
-	fmt.Println(r)
 }
 
 func Test_router_AddRoute(t *testing.T) {
