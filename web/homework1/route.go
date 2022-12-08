@@ -93,10 +93,8 @@ func (r *router) findRoute(method string, path string) (*matchInfo, bool) {
 type nodeType int
 
 const (
-	// 虚拟节点
-	nodeTypeFake = iota
 	// 静态路由
-	nodeTypeStatic
+	nodeTypeStatic = iota
 	// 正则路由
 	nodeTypeReg
 	// 路径参数路由
@@ -136,15 +134,8 @@ type node struct {
 
 func newRootNode() *node {
 	return &node{
-		typ:        0,
-		path:       "/",
-		children:   nil,
-		handler:    nil,
-		starChild:  nil,
-		paramChild: nil,
-		paramName:  "",
-		regChild:   nil,
-		regExpr:    nil,
+		typ:  nodeTypeStatic,
+		path: "/",
 	}
 }
 
@@ -160,27 +151,86 @@ func (n *node) childOf(path string) (*node, bool) {
 // 其次判断 path 是不是参数路径，即以 : 开头的路径
 // 最后会从 children 里面查找，
 // 如果没有找到，那么会创建一个新的节点，并且保存在 node 里面
-func (n *node) childOrCreate(path string) *node {
-	if n, ok := n.children[path]; ok {
-		return n
+func (n *node) childOrCreate(seg string) *node {
+	if "*" == seg {
+		if n.paramChild != nil {
+			panic("web: 非法路由，已有路径参数路由。不允许同时注册通配符路由和参数路由 [*]")
+		}
+		if n.regChild != nil {
+			panic("web: 非法路由，已有正则路由。不允许同时注册通配符路由和正则路由 [*]")
+		}
+		// 添加一个通配符子结点
+		if n.starChild == nil {
+			n.starChild = &node{
+				typ:  nodeTypeAny,
+				path: "*",
+			}
+		}
+		return n.starChild
+	}
+
+	if seg[0] == ':' && strings.Contains(seg, "(") && strings.Contains(seg, ")") {
+		// 添加一个正则匹配子结点
+		if n.starChild != nil {
+			panic("web: 非法路由，已有通配符路由。不允许同时注册通配符路由和正则路由 [" + seg + "]")
+		}
+		if n.paramChild != nil {
+			panic("web: 非法路由，已有路径参数路由。不允许同时注册正则路由和参数路由 [" + seg + "]")
+		}
+		if n.regChild != nil && seg != n.regChild.path {
+			panic("web: 路由冲突，正则路由冲突，已有 " + n.regChild.path + "，新注册 " + seg)
+		}
+		// :id(reg)
+		if n.regChild == nil {
+			l := strings.Index(seg, "(")
+			r := strings.Index(seg, ")")
+			regStr := seg[l+1 : r]
+			rgx, _ := regexp.Compile(regStr)
+			n.regChild = &node{
+				typ:       nodeTypeReg,
+				path:      seg,
+				paramName: seg[1:l],
+			}
+			n.regExpr = rgx
+		}
+		return n.regChild
+	}
+
+	if seg[0] == ':' {
+		if n.starChild != nil {
+			panic("web: 非法路由，已有通配符路由。不允许同时注册通配符路由和参数路由 [" + seg + "]")
+		}
+		if n.regChild != nil {
+			panic("web: 非法路由，已有正则路由。不允许同时注册正则路由和参数路由 [" + seg + "]")
+		}
+		if n.paramChild != nil && seg != n.paramChild.path {
+			panic("web: 路由冲突，参数路由冲突，已有 " + n.paramChild.path + "，新注册 " + seg)
+		}
+		// :id
+		if n.paramChild == nil {
+			n.paramChild = &node{
+				typ:       nodeTypeParam,
+				path:      seg,
+				paramName: seg[1:],
+			}
+		}
+		return n.paramChild
 	}
 
 	if n.children == nil {
 		n.children = make(map[string]*node)
 	}
 
-	n.children[path] = &node{
-		typ:        0,
-		path:       path,
-		children:   nil,
-		handler:    nil,
-		starChild:  nil,
-		paramChild: nil,
-		paramName:  "",
-		regChild:   nil,
-		regExpr:    nil,
+	// 默认就从静态路由里边找
+	if n, ok := n.children[seg]; ok {
+		return n
 	}
-	return n.children[path]
+
+	n.children[seg] = &node{
+		typ:  nodeTypeStatic,
+		path: seg,
+	}
+	return n.children[seg]
 }
 
 type matchInfo struct {

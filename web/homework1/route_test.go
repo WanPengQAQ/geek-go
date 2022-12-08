@@ -48,6 +48,73 @@ func TestMyTestOfIllegalPath(t *testing.T) {
 	assert.PanicsWithValue(t, "web: 路由冲突[/]", func() {
 		r.addRoute(http.MethodGet, "/", mockHandler)
 	})
+
+	// 同时注册通配符路由，参数路由，正则路由
+	r = newRouter()
+	assert.PanicsWithValue(t, "web: 非法路由，已有通配符路由。不允许同时注册通配符路由和参数路由 [:id]", func() {
+		r.addRoute(http.MethodGet, "/a/*", mockHandler)
+		r.addRoute(http.MethodGet, "/a/:id", mockHandler)
+	})
+	r = newRouter()
+	assert.PanicsWithValue(t, "web: 非法路由，已有通配符路由。不允许同时注册通配符路由和正则路由 [:id(.*)]", func() {
+		r.addRoute(http.MethodGet, "/a/b/*", mockHandler)
+		r.addRoute(http.MethodGet, "/a/b/:id(.*)", mockHandler)
+	})
+	r = newRouter()
+	assert.PanicsWithValue(t, "web: 非法路由，已有通配符路由。不允许同时注册通配符路由和参数路由 [:id]", func() {
+		r.addRoute(http.MethodGet, "/*", mockHandler)
+		r.addRoute(http.MethodGet, "/:id", mockHandler)
+	})
+	r = newRouter()
+	assert.PanicsWithValue(t, "web: 非法路由，已有路径参数路由。不允许同时注册通配符路由和参数路由 [*]", func() {
+		r.addRoute(http.MethodGet, "/a/b/:id", mockHandler)
+		r.addRoute(http.MethodGet, "/a/b/*", mockHandler)
+	})
+	r = newRouter()
+	assert.PanicsWithValue(t, "web: 非法路由，已有路径参数路由。不允许同时注册通配符路由和参数路由 [*]", func() {
+		r.addRoute(http.MethodGet, "/:id", mockHandler)
+		r.addRoute(http.MethodGet, "/*", mockHandler)
+	})
+	r = newRouter()
+	assert.PanicsWithValue(t, "web: 非法路由，已有路径参数路由。不允许同时注册正则路由和参数路由 [:id(.*)]", func() {
+		r.addRoute(http.MethodGet, "/a/b/:id", mockHandler)
+		r.addRoute(http.MethodGet, "/a/b/:id(.*)", mockHandler)
+	})
+	r = newRouter()
+	assert.PanicsWithValue(t, "web: 非法路由，已有正则路由。不允许同时注册通配符路由和正则路由 [*]", func() {
+		r.addRoute(http.MethodGet, "/a/b/:id(.*)", mockHandler)
+		r.addRoute(http.MethodGet, "/a/b/*", mockHandler)
+	})
+	r = newRouter()
+	assert.PanicsWithValue(t, "web: 非法路由，已有正则路由。不允许同时注册正则路由和参数路由 [:id]", func() {
+		r.addRoute(http.MethodGet, "/a/b/:id(.*)", mockHandler)
+		r.addRoute(http.MethodGet, "/a/b/:id", mockHandler)
+	})
+	// 参数冲突
+	r = newRouter()
+	assert.PanicsWithValue(t, "web: 路由冲突，参数路由冲突，已有 :id，新注册 :name", func() {
+		r.addRoute(http.MethodGet, "/a/b/c/:id", mockHandler)
+		r.addRoute(http.MethodGet, "/a/b/c/:name", mockHandler)
+	})
+	// 正则冲突
+	r = newRouter()
+	assert.PanicsWithValue(t, "web: 路由冲突，正则路由冲突，已有 :id(.*)，新注册 :name([0-9])", func() {
+		r.addRoute(http.MethodGet, "/a/b/*/123/:id(.*)", mockHandler)
+		r.addRoute(http.MethodGet, "/a/b/*/123/:name([0-9])", mockHandler)
+	})
+
+	r = newRouter()
+	assert.NotPanics(t, func() {
+		r.addRoute(http.MethodGet, "/a/b/:id", mockHandler)
+		r.addRoute(http.MethodGet, "/a/b/:id/123", mockHandler)
+	})
+
+	r = newRouter()
+	assert.NotPanics(t, func() {
+		r.addRoute(http.MethodGet, "/a/b/:id(.*)", mockHandler)
+		r.addRoute(http.MethodGet, "/a/b/:id(.*)/123", mockHandler)
+	})
+
 }
 
 func TestMyTestOfStaticRoute(t *testing.T) {
@@ -57,11 +124,16 @@ func TestMyTestOfStaticRoute(t *testing.T) {
 		should router
 	}{
 		{
-			method: []string{http.MethodGet, http.MethodPost},
-			path:   []string{"/", "/"},
+			method: []string{http.MethodGet, http.MethodPost, http.MethodGet},
+			path:   []string{"/", "/", "/*"},
 			should: router{trees: map[string]*node{
 				http.MethodGet: &node{
+					typ:  nodeTypeStatic,
 					path: "/",
+					starChild: &node{
+						typ:  nodeTypeAny,
+						path: "*",
+					},
 				},
 				http.MethodPost: &node{
 					path: "/",
@@ -69,22 +141,25 @@ func TestMyTestOfStaticRoute(t *testing.T) {
 			}},
 		},
 		{
-			method: []string{http.MethodGet},
-			path:   []string{"/a"},
+			method: []string{http.MethodGet, http.MethodGet},
+			path:   []string{"/a", "/a/*"},
 			should: router{trees: map[string]*node{
 				http.MethodGet: &node{
 					path: "/",
 					children: map[string]*node{
 						"a": &node{
 							path: "a",
+							starChild: &node{
+								path: "*",
+							},
 						},
 					},
 				},
 			}},
 		},
 		{
-			method: []string{http.MethodGet, http.MethodGet, http.MethodGet, http.MethodGet},
-			path:   []string{"/a", "/b", "/a/c", "/a/e"},
+			method: []string{http.MethodGet, http.MethodGet, http.MethodGet, http.MethodGet, http.MethodGet},
+			path:   []string{"/a", "/b", "/a/c", "/a/e", "/*/c"},
 			should: router{trees: map[string]*node{
 				http.MethodGet: &node{
 					path: "/",
@@ -104,6 +179,15 @@ func TestMyTestOfStaticRoute(t *testing.T) {
 							path: "b",
 						},
 					},
+					starChild: &node{
+						typ:  nodeTypeAny,
+						path: "*",
+						children: map[string]*node{
+							"c": &node{
+								path: "c",
+							},
+						},
+					},
 				},
 			}},
 		},
@@ -117,7 +201,191 @@ func TestMyTestOfStaticRoute(t *testing.T) {
 		s, ok := r.equal(u.should)
 		assert.Equal(t, ok, true, s)
 	}
+}
 
+func TestMyAddRoute(t *testing.T) {
+	addActions := []struct {
+		method string
+		path   string
+	}{
+		// 静态路由
+		{
+			method: http.MethodGet,
+			path:   "/user",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/user/home",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/order/detail",
+		},
+		{
+			method: http.MethodPost,
+			path:   "/order/create",
+		},
+		{
+			method: http.MethodPost,
+			path:   "/login",
+		},
+		// 通配符测试用例
+		{
+			method: http.MethodGet,
+			path:   "/order/*",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/*",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/*/*",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/*/abc",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/*/abc/*",
+		},
+		// 参数查找测试用例
+		{
+			method: http.MethodGet,
+			path:   "/param/:id",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/param/:id/detail",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/param/:id/*",
+		},
+		// 正则路由
+		{
+			method: http.MethodDelete,
+			path:   "/reg/:id(.*)",
+		},
+		{
+			method: http.MethodDelete,
+			path:   "/:name(^.+$)/abc",
+		},
+	}
+	mokeHandle := func(ctx *Context) {}
+	should := &router{trees: map[string]*node{
+		http.MethodGet: &node{
+			typ:     nodeTypeStatic,
+			path:    "/",
+			handler: mokeHandle,
+			children: map[string]*node{
+				"user": &node{
+					typ:     nodeTypeStatic,
+					path:    "user",
+					handler: mokeHandle,
+					children: map[string]*node{
+						"home": &node{
+							typ:     nodeTypeStatic,
+							path:    "home",
+							handler: mokeHandle,
+						},
+					},
+				},
+				"order": &node{
+					typ:  nodeTypeStatic,
+					path: "order",
+					children: map[string]*node{
+						"detail": &node{
+							typ:     nodeTypeStatic,
+							path:    "detail",
+							handler: mokeHandle,
+						},
+					},
+					starChild: &node{
+						typ:     nodeTypeAny,
+						path:    "*",
+						handler: mokeHandle,
+					},
+				},
+				"param": &node{
+					typ:  nodeTypeStatic,
+					path: "param",
+					paramChild: &node{
+						typ:       nodeTypeParam,
+						path:      ":id",
+						handler:   mokeHandle,
+						paramName: "id",
+						children: map[string]*node{
+							"detail": &node{
+								typ:     nodeTypeStatic,
+								path:    "detai",
+								handler: mokeHandle,
+							},
+						},
+					},
+				},
+			},
+			starChild: &node{
+				typ:     nodeTypeAny,
+				path:    "*",
+				handler: mokeHandle,
+				starChild: &node{
+					typ:     nodeTypeAny,
+					path:    "*",
+					handler: mokeHandle,
+				},
+				children: map[string]*node{
+					"abc": &node{
+						typ:     nodeTypeStatic,
+						path:    "abc",
+						handler: mokeHandle,
+						starChild: &node{
+							typ:     nodeTypeAny,
+							path:    "*",
+							handler: mokeHandle,
+						},
+					},
+				},
+			},
+		},
+		http.MethodPost: &node{
+			typ:  nodeTypeStatic,
+			path: "/",
+			children: map[string]*node{
+				"login": &node{
+					typ:     nodeTypeStatic,
+					path:    "login",
+					handler: mokeHandle,
+				},
+				"order": &node{
+					typ:  nodeTypeStatic,
+					path: "order",
+					children: map[string]*node{
+						"create": &node{
+							typ:     nodeTypeStatic,
+							path:    "create",
+							handler: mokeHandle,
+						},
+					},
+				},
+			},
+		},
+	}}
+
+	r := newRouter()
+	for _, act := range addActions {
+		r.addRoute(act.method, act.path, mokeHandle)
+	}
+
+	errMsg, ok := should.equal(r)
+	if !ok {
+		assert.Equal(t, ok, true, errMsg)
+	}
 }
 
 func Test_router_AddRoute(t *testing.T) {
