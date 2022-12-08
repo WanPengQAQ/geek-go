@@ -38,6 +38,13 @@ func (r *router) checkPath(path string) {
 	}
 }
 
+func (r *router) initRoot(method string) {
+	root := r.trees[method]
+	if root == nil {
+		r.trees[method] = newRootNode()
+	}
+}
+
 // 将输入的path根据"/"切分，例如:
 //
 //	/a/b/c -> [/, a, b, c]
@@ -77,17 +84,36 @@ func (r *router) addRoute(method string, path string, handler HandleFunc) {
 	currNode.handler = handler
 }
 
-func (r *router) initRoot(method string) {
-	root := r.trees[method]
-	if root == nil {
-		r.trees[method] = newRootNode()
-	}
-}
-
 // findRoute 查找对应的节点
 // 注意，返回的 node 内部 HandleFunc 不为 nil 才算是注册了路由
 func (r *router) findRoute(method string, path string) (*matchInfo, bool) {
-	panic("implement me")
+	if _, ok := r.trees[method]; !ok {
+		return nil, false
+	}
+
+	answer := &matchInfo{}
+
+	currNode := r.trees[method]
+	segs := r.pathSegment(path)
+	for _, seg := range segs[1:] {
+		var exist bool
+		currNode, exist = currNode.childOf(seg)
+		if !exist {
+			return nil, false
+		}
+		if currNode.typ == nodeTypeParam || currNode.typ == nodeTypeReg {
+			answer.addValue(currNode.paramName, seg)
+		} else if currNode.typ == nodeTypeAny &&
+			currNode.isLeaf() {
+			// 说明当前的*是叶子结点, 这个结点可以匹配后续任意的结点,
+			// 如: target /a/b/c/d
+			// 	   router /a/b/* 匹配成功*
+			break
+		}
+	}
+
+	answer.n = currNode
+	return answer, true
 }
 
 type nodeType int
@@ -139,11 +165,33 @@ func newRootNode() *node {
 	}
 }
 
+func (n *node) isLeaf() bool {
+	if n.paramChild == nil && n.regChild == nil && n.starChild == nil && len(n.children) == 0 {
+		return true
+	}
+	return false
+}
+
 // child 返回子节点
 // 第一个返回值 *node 是命中的节点
 // 第二个返回值 bool 代表是否命中
-func (n *node) childOf(path string) (*node, bool) {
-	panic("implement me")
+func (n *node) childOf(seg string) (*node, bool) {
+	if child, ok := n.children[seg]; ok {
+		return child, true
+	}
+	if n.regChild != nil {
+		if n.regExpr.MatchString(seg) {
+			return n.regChild, true
+		}
+	}
+	if n.paramChild != nil {
+		return n.paramChild, true
+	}
+	if n.starChild != nil {
+		return n.starChild, true
+	}
+
+	return nil, false
 }
 
 // childOrCreate 查找子节点，
@@ -152,71 +200,30 @@ func (n *node) childOf(path string) (*node, bool) {
 // 最后会从 children 里面查找，
 // 如果没有找到，那么会创建一个新的节点，并且保存在 node 里面
 func (n *node) childOrCreate(seg string) *node {
-	if "*" == seg {
-		if n.paramChild != nil {
-			panic("web: 非法路由，已有路径参数路由。不允许同时注册通配符路由和参数路由 [*]")
-		}
-		if n.regChild != nil {
-			panic("web: 非法路由，已有正则路由。不允许同时注册通配符路由和正则路由 [*]")
-		}
-		// 添加一个通配符子结点
-		if n.starChild == nil {
-			n.starChild = &node{
-				typ:  nodeTypeAny,
-				path: "*",
-			}
-		}
-		return n.starChild
+	if isStar(seg) {
+		return n.childOrCreateStar()
+	} else if isReg(seg) {
+		return n.childOrCreateReg(seg)
+	} else if isParam(seg) {
+		return n.childOrCreateParam(seg)
+	} else {
+		return n.childOrCreateStatic(seg)
 	}
+}
 
-	if seg[0] == ':' && strings.Contains(seg, "(") && strings.Contains(seg, ")") {
-		// 添加一个正则匹配子结点
-		if n.starChild != nil {
-			panic("web: 非法路由，已有通配符路由。不允许同时注册通配符路由和正则路由 [" + seg + "]")
-		}
-		if n.paramChild != nil {
-			panic("web: 非法路由，已有路径参数路由。不允许同时注册正则路由和参数路由 [" + seg + "]")
-		}
-		if n.regChild != nil && seg != n.regChild.path {
-			panic("web: 路由冲突，正则路由冲突，已有 " + n.regChild.path + "，新注册 " + seg)
-		}
-		// :id(reg)
-		if n.regChild == nil {
-			l := strings.Index(seg, "(")
-			r := strings.Index(seg, ")")
-			regStr := seg[l+1 : r]
-			rgx, _ := regexp.Compile(regStr)
-			n.regChild = &node{
-				typ:       nodeTypeReg,
-				path:      seg,
-				paramName: seg[1:l],
-			}
-			n.regExpr = rgx
-		}
-		return n.regChild
-	}
+func isParam(seg string) bool {
+	return seg[0] == ':' && !(strings.Contains(seg, "(") && strings.Contains(seg, ")"))
+}
 
-	if seg[0] == ':' {
-		if n.starChild != nil {
-			panic("web: 非法路由，已有通配符路由。不允许同时注册通配符路由和参数路由 [" + seg + "]")
-		}
-		if n.regChild != nil {
-			panic("web: 非法路由，已有正则路由。不允许同时注册正则路由和参数路由 [" + seg + "]")
-		}
-		if n.paramChild != nil && seg != n.paramChild.path {
-			panic("web: 路由冲突，参数路由冲突，已有 " + n.paramChild.path + "，新注册 " + seg)
-		}
-		// :id
-		if n.paramChild == nil {
-			n.paramChild = &node{
-				typ:       nodeTypeParam,
-				path:      seg,
-				paramName: seg[1:],
-			}
-		}
-		return n.paramChild
-	}
+func isReg(seg string) bool {
+	return seg[0] == ':' && strings.Contains(seg, "(") && strings.Contains(seg, ")")
+}
 
+func isStar(seg string) bool {
+	return "*" == seg
+}
+
+func (n *node) childOrCreateStatic(seg string) *node {
 	if n.children == nil {
 		n.children = make(map[string]*node)
 	}
@@ -231,6 +238,71 @@ func (n *node) childOrCreate(seg string) *node {
 		path: seg,
 	}
 	return n.children[seg]
+}
+
+func (n *node) childOrCreateParam(seg string) *node {
+	if n.starChild != nil {
+		panic("web: 非法路由，已有通配符路由。不允许同时注册通配符路由和参数路由 [" + seg + "]")
+	}
+	if n.regChild != nil {
+		panic("web: 非法路由，已有正则路由。不允许同时注册正则路由和参数路由 [" + seg + "]")
+	}
+	if n.paramChild != nil && seg != n.paramChild.path {
+		panic("web: 路由冲突，参数路由冲突，已有 " + n.paramChild.path + "，新注册 " + seg)
+	}
+	// :id
+	if n.paramChild == nil {
+		n.paramChild = &node{
+			typ:       nodeTypeParam,
+			path:      seg,
+			paramName: seg[1:],
+		}
+	}
+	return n.paramChild
+}
+
+func (n *node) childOrCreateReg(seg string) *node {
+	// 添加一个正则匹配子结点
+	if n.starChild != nil {
+		panic("web: 非法路由，已有通配符路由。不允许同时注册通配符路由和正则路由 [" + seg + "]")
+	}
+	if n.paramChild != nil {
+		panic("web: 非法路由，已有路径参数路由。不允许同时注册正则路由和参数路由 [" + seg + "]")
+	}
+	if n.regChild != nil && seg != n.regChild.path {
+		panic("web: 路由冲突，正则路由冲突，已有 " + n.regChild.path + "，新注册 " + seg)
+	}
+	// :id(reg)
+	if n.regChild == nil {
+		l := strings.Index(seg, "(")
+		r := strings.Index(seg, ")")
+		regStr := seg[l+1 : r]
+		rgx, _ := regexp.Compile(regStr)
+		n.regChild = &node{
+			typ:       nodeTypeReg,
+			path:      seg,
+			paramName: seg[1:l],
+		}
+		n.regExpr = rgx
+	}
+	return n.regChild
+}
+
+func (n *node) childOrCreateStar() *node {
+	if n.paramChild != nil {
+		panic("web: 非法路由，已有路径参数路由。不允许同时注册通配符路由和参数路由 [*]")
+	}
+	if n.regChild != nil {
+		panic("web: 非法路由，已有正则路由。不允许同时注册通配符路由和正则路由 [*]")
+	}
+	// 添加一个通配符子结点
+	if n.starChild == nil {
+		n.starChild = &node{
+			typ:  nodeTypeAny,
+			path: "*",
+		}
+	}
+	return n.starChild
 }
 
 type matchInfo struct {
